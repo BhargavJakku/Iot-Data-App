@@ -1,0 +1,57 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+build/
+dist/
+*.egg-info/
+
+# Arduino / PlatformIO / build artifacts
+build/
+.pio/
+.pioenvs/
+.pioarchive/
+.arduino15/
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.a
+*.d
+*.eep
+*.log
+
+# SCons / other build caches
+.sconsign.dblite
+.cache/
+
+# Temporary / backup files
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.tmp.*
+*.orig
+
+# Local user archives/backups (project-specific)
+_archive/
+
+# Misc
+.vscode-test/
