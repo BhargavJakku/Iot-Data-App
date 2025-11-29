@@ -31,7 +31,7 @@ int lightToPct(int raw){ return clampPct(map(raw, LDR_DARK_RAW, LDR_BRIGHT_RAW, 
 
 // === WiFi credentials ===
 const char* WIFI_SSID = "Aain";      // your WiFi SSID
-const char* WIFI_PASS = "baingann";  // your WiFi password
+const char* WIFI_PASS = "wifi_password";  // your WiFi password
 
 const int MAX_RETRY_ATTEMPTS = 5;
 const int RETRY_DELAY = 5000;  // ms
