@@ -41,7 +41,7 @@ const char* INFLUX_WRITE_URL =
   "https://us-east-1-1.aws.cloud2.influxdata.com/api/v2/write?org=PlantPet&bucket=PlantPet&precision=s";
 
 // IMPORTANT: put your real token back here locally, not in chat
-const char* INFLUX_TOKEN       = "2PLrEim-oIFffTykK9YJhPqVHvallAHXUNJtZf-K1nqYWghmoXMiTV2Y7fXrmiKunxPvyLYpNtxBwup5P2uHnQ==";
+const char* INFLUX_TOKEN       = "api_token_goes_here";
 
 const char* INFLUX_MEASUREMENT = "plant_status";
 const char* INFLUX_DEVICE_ID   = "plantpet-01";
@@ -52,7 +52,7 @@ const char* SUPABASE_URL =
   "https://cwrnkigirfwvtsyazcoz.supabase.co/rest/v1/plantpetmins";
 
 // IMPORTANT: put your real anon key back here locally, not in chat
-const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cm5raWdpcmZ3dnRzeWF6Y296Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMyMzU2OTUsImV4cCI6MjA3ODgxMTY5NX0.wreA_XH-Ddq5XZiwsJ2ZFnTlBGpS0s9Mm7EJjzidiyc";
+const char* SUPABASE_ANON_KEY = "api_token_goes_here";
 
 // === 10-minute aggregation ===
 const unsigned long LOG_INTERVAL_MS = 600000UL;  // 10 minutes

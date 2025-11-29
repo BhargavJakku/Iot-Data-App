@@ -15,10 +15,12 @@ __pycache__/
 .venv/
 venv/
 env/
+.env
 ENV/
 pip-wheel-metadata/
 build/
 dist/
+secerts.h
 *.egg-info/
 
 # Arduino / PlatformIO / build artifacts
