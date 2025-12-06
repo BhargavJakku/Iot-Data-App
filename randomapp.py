@@ -1,27 +1,11 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from influxdb_client import InfluxDBClient
-import os
-from zoneinfo import ZoneInfo
 
-load_dotenv()
-INFLUX_TOKEN = os.getenv("Influx_API_Token")
-
-if not INFLUX_TOKEN:
-    st.error("INFLUX_TOKEN is not set correctly from .env")
-else:
-    print("Token loaded OK (length:", len(INFLUX_TOKEN), ")")
-
-
-# 🟢 NEW: InfluxDB Configuration
-INFLUX_URL = "https://us-east-1-1.aws.cloud2.influxdata.com" # e.g., "http://localhost:8086"
-#INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "Influx_API_Token")
-INFLUX_ORG = "PlantPet"
-INFLUX_BUCKET = "PlantPet"
-MEASUREMENT_NAME ="plant_status"  # Your measurement name
+#load_dotenv()
 
 # --- CONFIGURATION CONSTANTS (UNCHANGED) ---
 SOIL_WET = 700
@@ -120,69 +104,43 @@ h3 {
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# 🟢 NEW: Function to fetch data from InfluxDB
-@st.cache_data(ttl=600)  # Cache for 10 minutes (matches your data update frequency)
-def fetch_influxdb_data(days=7):
-    """
-    Fetch sensor data from InfluxDB for the last N days.
-    Returns a DataFrame with columns: timestamp, soil_pct, light_pct, happiness
-    """
-    try:
-        client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
-        query_api = client.query_api()
-        
-        # 🟢 Flux query to fetch sensor data for last N days
-        # Assumes your InfluxDB has fields: soil_pct, ldr_pct, happiness
-        query = f'''
-        from(bucket: "{INFLUX_BUCKET}")
-            |> range(start: -{days}d)
-            |> filter(fn: (r) => r["_measurement"] == "{MEASUREMENT_NAME}")
-            |> filter(fn: (r) => r["_field"] == "soil_pct" or r["_field"] == "ldr_pct" or r["_field"] == "happiness")
-            |> aggregateWindow(every: 10m, fn: mean, createEmpty: false)
-            |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-        '''
-        
-        # Execute query and convert to DataFrame
-        result = query_api.query_data_frame(query)
-        client.close()
-        
-        if result.empty:
-            st.warning("No data found in InfluxDB for the specified time range.")
-            return None
-        
-        # 🟢 Clean up the dataframe
-        # Rename columns to match expected format
-        LOCAL_TZ = ZoneInfo(os.getenv("LOCAL_TZ", "America/Los_Angeles"))
-        df = pd.DataFrame()
-        utc_times = pd.to_datetime(result['_time'], utc=True)
-        local_times = utc_times.dt.tz_convert(LOCAL_TZ)
-        df['timestamp'] = local_times.dt.tz_localize(None)
-        df['soil_pct'] = result.get('soil_pct', 0)
-        df['light_pct'] = result.get('ldr_pct', 0)  # Note: using ldr_pct from InfluxDB
-        df['happiness'] = result.get('happiness', 0)
-        
-        # Sort by timestamp
-        df = df.sort_values('timestamp').reset_index(drop=True)
-        
-        return df
-        
-    except Exception as e:
-        st.error(f"Error fetching data from InfluxDB: {str(e)}")
-        return None
-
-# 🟢 NEW: Load data function that uses InfluxDB
-@st.cache_data(ttl=600)
+# ---------- DATA GENERATION (UNCHANGED) ----------
+@st.cache_data
 def load_data():
-    """
-    Load real data from InfluxDB instead of generating dummy data
-    """
-    df = fetch_influxdb_data(days=7)
-    
-    if df is None or df.empty:
-        # Fallback: create empty dataframe with expected structure
-        st.error("Unable to load data from InfluxDB. Please check your connection settings.")
-        return pd.DataFrame(columns=['timestamp', 'soil_pct', 'light_pct', 'happiness'])
-    
+    now = datetime.now()
+    times = pd.date_range(end=now, periods=7 * 24, freq="H")
+
+    soil_raw = np.random.randint(SOIL_WET, SOIL_DRY, size=len(times))
+    light_raw = np.random.randint(LIGHT_LOW, LIGHT_HIGH, size=len(times))
+
+    df = pd.DataFrame(
+        {
+            "timestamp": times,
+            "soil_raw": soil_raw,
+            "light_raw": light_raw,
+        }
+    )
+
+    df["soil_pct"] = (SOIL_DRY - df["soil_raw"]) / (SOIL_DRY - SOIL_WET) * 100
+    df["soil_pct"] = df["soil_pct"].clip(0, 100)
+
+    df["light_pct"] = (df["light_raw"] - LIGHT_LOW) / (LIGHT_HIGH - LIGHT_LOW) * 100
+    df["light_pct"] = df["light_pct"].clip(0, 100)
+
+    # Simplified happiness score calculation
+    soil_score = np.where(
+        (df["soil_pct"] >= IDEAL_SOIL_MIN) & (df["soil_pct"] <= IDEAL_SOIL_MAX),
+        100,
+        (1 - np.abs(df["soil_pct"] - (IDEAL_SOIL_MIN + IDEAL_SOIL_MAX) / 2) / ((IDEAL_SOIL_MAX - IDEAL_SOIL_MIN) / 2)) * 100
+    ).clip(0, 100)
+
+    light_score = df["light_pct"]
+
+    df["happiness"] = (
+        0.6 * soil_score + 
+        0.4 * light_score
+    )
+
     return df
 
 # ---------- REUSABLE FUNCTIONS (UNCHANGED) ----------
@@ -231,26 +189,17 @@ def plot_sensor_data(df_filtered: pd.DataFrame, y_column: str, color: str, ideal
     return fig
 
 # ---------- MAIN APP LAYOUT ----------
-# 🟢 MODIFIED: Load real data from InfluxDB
 df = load_data()
-
-# 🟢 NEW: Safety check for empty dataframe
-if df.empty:
-    st.stop()
 
 # --- SIDEBAR: Date Range Selection ---
 now = datetime.now().date()
 with st.sidebar:
     st.header("Date Range")
-    # 🟢 MODIFIED: Use actual data date range
-    min_date = df["timestamp"].min().date() if not df.empty else now - timedelta(days=7)
-    max_date = df["timestamp"].max().date() if not df.empty else now
-    
     start_date, end_date = st.date_input(
         "Select Historical Data Range",
-        value=(max_date - timedelta(days=2), max_date),
-        min_value=min_date,
-        max_value=max_date
+        value=(now - timedelta(days=2), now),
+        min_value=df["timestamp"].min().date(),
+        max_value=now
     )
 
 start_dt = datetime.combine(start_date, datetime.min.time())
@@ -262,7 +211,7 @@ latest_happiness = latest["happiness"]
 latest_health_color = get_health_color(latest_happiness)
 
 # --- HEADER ---
-st.markdown("""<h1 style="text-align:center;margin-top:0;">  Plant Health Dashboard</h1>""", unsafe_allow_html=True)
+st.markdown("<h1>Plant Health Dashboard</h1>", unsafe_allow_html=True)
 
 # --- TOP SECTION: Plant Avatar (CENTERED IMPROVEMENT) ---
 
@@ -271,11 +220,11 @@ col_top = st.columns([1, 1, 1])
 
 with col_top[1]: 
     # The 'card' div is the key container. We will use it for centering.
-    #st.markdown('<div class="card" style="text-align:center; padding: 2.5rem 1.5rem;">', unsafe_allow_html=True) 
+    st.markdown('<div class="card" style="text-align:center; padding: 2.5rem 1.5rem;">', unsafe_allow_html=True) 
     
     # 1. Title and Caption
-    #st.markdown("<div class='card-title'>Live Plant Avatar</div>", unsafe_allow_html=True)
-    #st.markdown("<div class='card-caption'>Glows based on real-time health.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>Live Plant Avatar</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-caption'>Glows based on real-time health.</div>", unsafe_allow_html=True)
 
     # 2. Dynamic glow Avatar (The margin:auto ensures centering)
     avatar_html = f"""
@@ -293,7 +242,7 @@ with col_top[1]:
     
     # 3. Happiness Score Value (Centered due to 'text-align:center' on parent card)
     score_html = f"""
-        <div style="font-size: 38px; font-weight: 700; color: {latest_health_color}; margin-top: 15px; margin-bottom: 10px;text-align: center;">
+        <div style="font-size: 38px; font-weight: 700; color: {latest_health_color}; margin-top: 15px; margin-bottom: 10px;">
             {int(latest_happiness)}%
         </div>
     """
@@ -324,88 +273,69 @@ with col_top[1]:
     st.markdown("</div>", unsafe_allow_html=True) # Closing the card
 
 
-# 🔴 MODIFIED: Changed from "24-Hour Trends" to "Last 7 Days Sensor Data"
-st.markdown("<h3>Sensor Trends (Last 7 Days)</h3>", unsafe_allow_html=True)
+# --- MIDDLE SECTION: 24-Hour Trends (UNCHANGED) ---
+st.markdown("<h3>Sensor Trends (Current 24 Hours)</h3>", unsafe_allow_html=True)
 
-# 🟢 MODIFIED: Show last 7 days instead of 24 hours
-last_7_days = df[df["timestamp"] > df["timestamp"].max() - timedelta(days=7)]
+last_24h = df[df["timestamp"] > df["timestamp"].max() - timedelta(hours=24)]
 col_soil, col_light = st.columns(2)
 
 
-# SOIL SENSOR - 🟢 MODIFIED: Now showing 7 days of real data
+# SOIL SENSOR
 with col_soil:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>Soil Moisture (Last 7 Days)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>Soil Moisture</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='card-caption'>Current: **{latest['soil_pct']:.1f}%** (Target: {IDEAL_SOIL_MIN}% - {IDEAL_SOIL_MAX}%)</div>", unsafe_allow_html=True)
     st.markdown("<hr style='border:0;border-top:1px solid rgba(148,163,184,0.2);margin:8px 0 12px;'>", unsafe_allow_html=True)
     
-    soil_fig = plot_sensor_data(last_7_days, "soil_pct", "#38bdf8", IDEAL_SOIL_MIN, IDEAL_SOIL_MAX, yaxis_title="Moisture (%)")
-    st.plotly_chart(soil_fig, width="stretch")
+    soil_fig = plot_sensor_data(last_24h, "soil_pct", "#38bdf8", IDEAL_SOIL_MIN, IDEAL_SOIL_MAX, yaxis_title="Moisture (%)")
+    st.plotly_chart(soil_fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# AMBIENT LIGHT - 🟢 MODIFIED: Now showing 7 days of real data
+# AMBIENT LIGHT
 with col_light:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>Ambient Light (Last 7 Days)</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='card-caption'>Current: **{latest['light_pct']:.1f}%**</div>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>Ambient Light</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='card-caption'>Current: **{latest['light_pct']:.1f}%** (LDR: {latest['light_raw']:.0f})</div>", unsafe_allow_html=True)
     st.markdown("<hr style='border:0;border-top:1px solid rgba(148,163,184,0.2);margin:8px 0 12px;'>", unsafe_allow_html=True)
 
-    light_fig = plot_sensor_data(last_7_days, "light_pct", "#facc15", yaxis_title="Light (%)")
-    st.plotly_chart(light_fig, width="stretch")
+    light_fig = plot_sensor_data(last_24h, "light_pct", "#facc15", yaxis_title="Light (%)")
+    st.plotly_chart(light_fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# 🔴 MODIFIED: Changed from "Correlation Analysis" to "Happiness Score with Soil & Light"
-st.markdown("<h3>Happiness Score Analysis (Last 7 Days)</h3>", unsafe_allow_html=True)
+# --- BOTTOM SECTION: Correlation Analysis (UNCHANGED) ---
+st.markdown("<h3>Historical Correlation Analysis</h3>", unsafe_allow_html=True)
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.markdown("<div class='card-title'>Happiness Score with Soil Moisture & Ambient Light</div>", unsafe_allow_html=True)
-st.markdown(f"<div class='card-caption'>Combined view of happiness score influenced by soil and light levels ({start_date} to {end_date}).</div>", unsafe_allow_html=True)
+st.markdown("<div class='card-title'>Soil Moisture vs. Ambient Light</div>", unsafe_allow_html=True)
+st.markdown(f"<div class='card-caption'>Overlay of key metrics over the selected range ({start_date} to {end_date}).</div>", unsafe_allow_html=True)
 
-# 🟢 MODIFIED: Now includes happiness score in the chart
-corr_df = df_filtered.set_index("timestamp")[["soil_pct", "light_pct", "happiness"]]
+corr_df = df_filtered.set_index("timestamp")[["soil_pct", "light_pct"]]
 
 corr_fig = go.Figure()
-
-# 🟢 NEW: Add happiness score trace
-corr_fig.add_trace(go.Scatter(
-    x=corr_df.index,
-    y=corr_df["happiness"],
-    mode="lines",
-    name="Happiness (%)",
-    line=dict(width=3, color="#22c55e"),
-    yaxis="y1"
-))
-
 corr_fig.add_trace(go.Scatter(
     x=corr_df.index,
     y=corr_df["soil_pct"],
     mode="lines",
     name="Soil (%)",
-    line=dict(width=2, color="#38bdf8", dash="dash"),
-    yaxis="y1"
+    line=dict(width=2, color="#38bdf8")
 ))
-
 corr_fig.add_trace(go.Scatter(
     x=corr_df.index,
     y=corr_df["light_pct"],
     mode="lines",
     name="Light (%)",
-    line=dict(width=2, color="#facc15", dash="dot"),
-    yaxis="y1"
+    line=dict(width=2, color="#facc15")
 ))
-
 corr_fig.update_layout(
-    height=350,
+    height=300,
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
     margin=dict(l=0, r=0, t=20, b=0),
-    yaxis=dict(color="#9ca3af", showgrid=True, gridcolor="rgba(148,163,184,0.1)", title="Percentage (%)", range=[0, 100]),
+    yaxis=dict(color="#9ca3af", showgrid=False, title="Moisture/Light (%)", range=[0, 100]),
     xaxis=dict(color="#9ca3af", showgrid=False, title=""),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    hovermode="x unified"
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
-
-st.plotly_chart(corr_fig, width="stretch")
+st.plotly_chart(corr_fig, use_container_width=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
