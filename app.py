@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit import errors
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
@@ -7,18 +8,31 @@ from influxdb_client import InfluxDBClient
 import os
 from zoneinfo import ZoneInfo
 
-load_dotenv()
-INFLUX_TOKEN = os.getenv("Influx_API_Token")
 
-if not INFLUX_TOKEN:
-    st.error("INFLUX_TOKEN is not set correctly from .env")
-else:
-    print("Token loaded OK (length:", len(INFLUX_TOKEN), ")")
+
+# ---------- LOAD ENV VARIABLES ----------
+
+if os.path.exists(".env"):
+    load_dotenv()
+
+def get_config(name: str, default: str | None = None):
+    """
+    Try to read from Streamlit secrets (Cloud / local secrets.toml).
+    If no secrets file exists, gracefully fall back to environment variables.
+    """
+    # 1) Try secrets first
+    try:
+        return st.secrets[name]
+    except errors.StreamlitSecretNotFoundError:
+        return os.getenv(name, default)
+
+#INFLUX_TOKEN = os.getenv("Influx_API_Token")
+#INFLUX_TOKEN = st.secrets.get("INFLUX_TOKEN", os.getenv("Influx_API_Token"))
 
 
 # 🟢 NEW: InfluxDB Configuration
 INFLUX_URL = "https://us-east-1-1.aws.cloud2.influxdata.com" # e.g., "http://localhost:8086"
-#INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "Influx_API_Token")
+INFLUX_TOKEN = get_config("Influx_API_Token")
 INFLUX_ORG = "PlantPet"
 INFLUX_BUCKET = "PlantPet"
 MEASUREMENT_NAME ="plant_status"  # Your measurement name
