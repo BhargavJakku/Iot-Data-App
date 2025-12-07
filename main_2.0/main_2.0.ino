@@ -31,7 +31,7 @@ int lightToPct(int raw){ return clampPct(map(raw, LDR_DARK_RAW, LDR_BRIGHT_RAW, 
 
 // === WiFi credentials ===
 const char* WIFI_SSID = "Aain";      // your WiFi SSID
-const char* WIFI_PASS = "wifi_password";  // your WiFi password
+const char* WIFI_PASS = "password";  // your WiFi password
 
 const int MAX_RETRY_ATTEMPTS = 5;
 const int RETRY_DELAY = 5000;  // ms
@@ -41,7 +41,7 @@ const char* INFLUX_WRITE_URL =
   "https://us-east-1-1.aws.cloud2.influxdata.com/api/v2/write?org=PlantPet&bucket=PlantPet&precision=s";
 
 // IMPORTANT: put your real token back here locally, not in chat
-const char* INFLUX_TOKEN       = "api_token_goes_here";
+const char* INFLUX_TOKEN       = "token";
 
 const char* INFLUX_MEASUREMENT = "plant_status";
 const char* INFLUX_DEVICE_ID   = "plantpet-01";
@@ -52,7 +52,19 @@ const char* SUPABASE_URL =
   "https://cwrnkigirfwvtsyazcoz.supabase.co/rest/v1/plantpetmins";
 
 // IMPORTANT: put your real anon key back here locally, not in chat
-const char* SUPABASE_ANON_KEY = "api_token_goes_here";
+const char* SUPABASE_ANON_KEY = "token";
+
+
+// === Pushover config (NEW) ===
+const char* PUSHOVER_API_TOKEN = "token";  // from Pushover app
+const char* PUSHOVER_USER_KEY  = "token";   // from Pushover dashboard
+
+// Alert thresholds based on "score" (happiness %)
+const float HAPPINESS_THRESHOLD = 40.0;  // alert when happiness < this
+const float RECOVERY_MARGIN     = 5.0;   // must go above threshold+margin to reset
+
+bool alertSent = false;  // avoid spamming alerts
+
 
 // === 10-minute aggregation ===
 const unsigned long LOG_INTERVAL_MS = 600000UL;  // 10 minutes
@@ -61,6 +73,7 @@ long aggSoilSum  = 0;
 long aggLightSum = 0;
 long aggScoreSum = 0;
 long aggCount    = 0;
+
 
 // ================= Display helpers =================
 void drawFace(const char* mood){
@@ -109,6 +122,7 @@ void drawHeartbeat(int base) {
   display.fillRect(0, 55, width, 6, SSD1306_WHITE);
   display.display();
 }
+
 
 // ================= WiFi with logging =================
 void connectToWiFi() {
@@ -159,9 +173,13 @@ void connectToWiFi() {
   ESP.restart();
 }
 
+
 // ================= OTA =================
 void setupOTA() {
   ArduinoOTA.setHostname("PlantPet-ESP32");
+
+  ArduinoOTA.setPassword("plantpet123");
+
 
   ArduinoOTA.onStart([]() {
     Serial.println();
@@ -181,6 +199,51 @@ void setupOTA() {
     Serial.printf("\n[OTA] Error[%u]\n", error);
   });
 }
+
+
+// ================= Pushover sender (NEW) =================
+void sendPushoverAlert(const String& message, const String& title = "🌱 Plant-Pet Alert") {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Pushover] WiFi not connected, trying to reconnect...");
+    connectToWiFi();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[Pushover] Still not connected, aborting alert.");
+      return;
+    }
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();  // skip TLS cert validation for simplicity
+
+  HTTPClient http;
+  if (!http.begin(client, "https://api.pushover.net/1/messages.json")) {
+    Serial.println("[Pushover] http.begin() failed");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  String body = "token=" + String(PUSHOVER_API_TOKEN) +
+                "&user=" + String(PUSHOVER_USER_KEY) +
+                "&title=" + title +
+                "&message=" + message +
+                "&priority=1&sound=spacealarm";
+
+  Serial.println("[Pushover] Sending alert...");
+  int httpCode = http.POST(body);
+
+  Serial.print("[Pushover] HTTP code: ");
+  Serial.println(httpCode);
+
+  if (httpCode > 0) {
+    String resp = http.getString();
+    Serial.println("[Pushover] Response:");
+    Serial.println(resp);
+  }
+
+  http.end();
+}
+
 
 // ================= InfluxDB sender =================
 void sendToInflux(float avgSoil, float avgLight, float avgScore) {
@@ -221,6 +284,7 @@ void sendToInflux(float avgSoil, float avgLight, float avgScore) {
 
   http.end();
 }
+
 
 // ================= Supabase sender =================
 void sendToSupabase(float avgSoil, float avgLight, float avgScore) {
@@ -266,6 +330,7 @@ void sendToSupabase(float avgSoil, float avgLight, float avgScore) {
   http.end();
 }
 
+
 // ==================== SETUP ====================
 void setup() {
   Serial.begin(115200);
@@ -294,6 +359,7 @@ void setup() {
   delay(1500);
 }
 
+
 // ==================== LOOP ====================
 void loop() {
   ArduinoOTA.handle();  // keep OTA responsive
@@ -304,7 +370,29 @@ void loop() {
   int soilPct  = soilToPct(soilRaw);
   int lightPct = lightToPct(ldrRaw);
 
-  int score = (soilPct * 7.7 + lightPct * 2.5) / 10;
+  int score = (soilPct * 7.7 + lightPct * 2.5) / 10;  // happiness %
+
+  // === ALERT LOGIC (Pushover) – NEW ===
+  float happiness = (float)score;
+
+  if (happiness < HAPPINESS_THRESHOLD) {
+    if (!alertSent) {
+      String msg = "Happiness dropped to " + String(happiness, 1) +
+                   "% (threshold " + String(HAPPINESS_THRESHOLD, 0) +
+                   "%). Soil: " + String(soilPct) + "%, Light: " +
+                   String(lightPct) + "%.";
+      sendPushoverAlert(msg);
+      alertSent = true;
+    }
+  } else if (happiness > HAPPINESS_THRESHOLD + RECOVERY_MARGIN) {
+    if (alertSent) {
+      String msg = "🎉 Happiness recovered to " + String(happiness, 1) +
+                   "%. Soil: " + String(soilPct) + "%, Light: " +
+                   String(lightPct) + "%.";
+      sendPushoverAlert(msg);
+    }
+    alertSent = false;
+  }
 
   // aggregate for cloud logging
   aggSoilSum  += soilPct;
@@ -326,7 +414,7 @@ void loop() {
     Serial.print("avgScore: "); Serial.println(avgScore);
 
     sendToInflux(avgSoil, avgLight, avgScore);
-    sendToSupabase(avgSoil, avgLight, avgScore);
+    sendToSupabase(avgSoil, avgScore, avgScore);
 
     aggSoilSum = aggLightSum = aggScoreSum = 0;
     aggCount   = 0;
